@@ -1,0 +1,22 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cronjob
+  namespace: {{ .Values.namespace }}
+spec:
+  schedule: "0 1 * * *"
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: {{ .Values.serviceAccount.name }}
+          containers:
+          - name: cronjob
+            image: "{{ .Values.global.accountId }}.{{ .Values.cronjob.image.repository }}:{{ .Values.cronjob.image.tag }}"
+            imagePullPolicy: {{ .Values.image.pullPolicy }}
+            env:
+              - name: ENV_STATE
+                value: {{ .Values.global.envState }}
+          restartPolicy: OnFailure

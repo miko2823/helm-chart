@@ -1,0 +1,61 @@
+apiVersion: appmesh.k8s.aws/v1beta2
+kind: VirtualService
+metadata:
+  name: {{ .Values.serviceName }}
+  namespace: {{ .Values.namespace }}
+spec:
+  awsName: "{{ .Values.serviceName }}.{{ .Values.global.cloudMapNamespace }}"
+  provider:
+    virtualRouter:
+      virtualRouterRef:
+        name: {{ .Values.serviceName }}
+
+---
+apiVersion: appmesh.k8s.aws/v1beta2
+kind: VirtualRouter
+metadata:
+  namespace: {{ .Values.namespace }}
+  name: {{ .Values.serviceName }}
+spec:
+  listeners:
+    - portMapping:
+        port: {{ .Values.service.port }}
+        protocol: http
+  routes:
+    - name: app2-route
+      httpRoute:
+        match:
+          prefix: /
+        action:
+          weightedTargets:
+            - virtualNodeRef:
+                name: {{ .Values.serviceName }}
+              weight: 1
+        timeout:
+          idle:
+            value: {{ .Values.requestTimeout }}
+            unit: s
+          perRequest:
+            value: {{ .Values.requestTimeout }}
+            unit: s
+        retryPolicy:
+          maxRetries: 1
+          perRetryTimeout:
+            unit: s
+            value: {{ .Values.retryTimeout }}
+          httpRetryEvents:
+            - stream-error
+            - gateway-error
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.serviceName }}
+  namespace: {{ .Values.namespace }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      name: http
+  selector:
+    app: {{ .Values.serviceName }}

@@ -1,0 +1,162 @@
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+#########################
+# Global
+#########################
+global:
+  namespace: app
+  envState: dev
+  accountId: {YourAccountId}
+  cloudMapNamespace: {app}.svc.cluster.local
+  serviceMesh: {YourServiceMesh}
+  rootCaARN: {YourCaARN}
+  certificateARN: {YourCertArn}
+  baseImage:
+    repository: {App1Repository}
+    pullPolicy: Always
+    tag: latest
+  datadog:
+    enable:
+      - prod
+    version: 0.1.0
+  django:
+    settingsFile: SettingsFile
+
+#########################
+# migration-job
+#########################
+job:
+  namespace: job
+  job:
+    restartPolicy: Never
+    serviceAccount: 
+      name: {YourSA}
+
+#########################
+# app1
+#########################
+app1:
+  namespace: app
+  hostName: {HostName}
+  wafId: {WafId}
+  replicaCount: {replicaCount}
+  maxReplicaCount: {maxReplicaCount}
+  serviceName: app1
+  imagePullSecrets: []
+  nameOverride: ""
+  fullnameOverride: ""
+  serviceAccount:
+    create: false
+    annotations: {}
+    name: {app1SA}
+  podAnnotations: {}
+  podSecurityContext: {}
+  securityContext: {}
+  service:
+    type: NodePort
+    port: 80
+  requestTimeout: 60
+  retryTimeout: 60
+  ingress:
+    enabled: false
+    annotations: {}
+    hosts:
+      - host: chart-example.local
+        paths:
+          - path: /
+            backend:
+              serviceName: chart-example.local
+              servicePort: 80
+    tls: []
+  image:
+    repository: {App1Repository}
+    containerPort: 8000
+    pullPolicy: Always
+  resources:
+    requests:
+      cpu: 500m
+    limits:
+      cpu: 1000m
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  livenessProbe:
+    initialDelaySeconds: 15
+    periodSeconds: 5
+    timeoutSeconds: 5
+    failureThreshold: 5
+  readinessProbe:
+    initialDelaySeconds: 15
+    periodSeconds: 5
+    timeoutSeconds: 5
+    failureThreshold: 5
+  hpa:
+    averageUtilization: 50
+
+
+#########################
+# app2
+#########################
+app2:
+  namespace: app
+  replicaCount: 2
+  maxReplicaCount: 10
+  serviceName: app2
+  runUserId: 1001
+  image:
+    repository: {App2Repository}
+    containerPort: 8080
+    pullPolicy: Always
+    tag: latest
+  imagePullSecrets: []
+  nameOverride: ""
+  fullnameOverride: ""
+  serviceAccount:
+    create: false
+    annotations: {}
+    name: {app2SA}
+  podAnnotations: {}
+  podSecurityContext: {}
+  securityContext: {}
+  service:
+    type: ClusterIP
+    port: 8080
+  requestTimeout: 60
+  retryTimeout: 60
+  resources:
+    requests:
+      cpu: 500m
+    limits:
+      cpu: 1000m
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  livenessProbe:
+    initialDelaySeconds: 15
+    periodSeconds: 5
+    timeoutSeconds: 5
+    failureThreshold: 5
+  readinessProbe:
+    initialDelaySeconds: 15
+    periodSeconds: 5
+    timeoutSeconds: 5
+    failureThreshold: 5
+  hpa:
+    averageUtilization: 50
+  
+
+#########################
+# cronjob
+#########################
+cronjob:
+  namespace: job
+  image:
+    pullPolicy: Always
+  serviceAccount:
+    name: cronjob
+  cronjob:
+    image:
+      repository: {CronjobRepository}
+      tag: latest
+  

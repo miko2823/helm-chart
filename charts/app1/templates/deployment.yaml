@@ -1,0 +1,154 @@
+apiVersion: appmesh.k8s.aws/v1beta2
+kind: VirtualNode
+metadata:
+  name: {{ .Values.serviceName }}
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ .Values.serviceName }}
+  listeners:
+    - portMapping:
+        port: {{ .Values.image.containerPort }}
+        protocol: http
+      timeout:
+        http:
+          idle:
+            value: {{ .Values.requestTimeout }}
+            unit: s
+          perRequest:
+            value: {{ .Values.requestTimeout }}
+            unit: s
+  backends:
+    - virtualService:
+        virtualServiceRef:
+          name: app2
+  backendDefaults:
+    clientPolicy:
+      tls:
+        enforce: true
+        validation:
+          trust:
+            acm:
+              certificateAuthorityARNs:
+                - {{ .Values.global.rootCaARN }}
+  serviceDiscovery:
+    awsCloudMap:
+      namespaceName: {{ .Values.global.cloudMapNamespace }}
+      serviceName: {{ .Values.serviceName }}
+  logging:
+    accessLog:
+      file:
+        path: "/dev/stdout"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.serviceName }}
+  namespace: {{ .Values.namespace }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Values.serviceName }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.serviceName }}
+        {{- if has .Values.global.envState .Values.global.datadog.enable }}
+        tags.datadoghq.com/env: "{{ .Values.global.envState }}"
+        tags.datadoghq.com/service: "{{ .Values.serviceName }}"
+        tags.datadoghq.com/version: "{{ .Values.global.datadog.version }}"
+        {{- end }}
+      annotations:
+        fluentbit.io/parser: envoy
+        appmesh.k8s.aws/mesh: {{ .Values.global.serviceMesh }}
+        appmesh.k8s.aws/virtualNode: "{{ .Values.serviceName }}_{{ .Values.namespace }}"
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      containers:
+        - name: {{ .Values.serviceName }}
+          image: "{{ .Values.global.accountId }}.{{ .Values.image.repository }}:{{ .Values.global.baseImage.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if has .Values.global.envState .Values.global.datadog.enable }}
+          command: ["ddtrace-run", "gunicorn", "config.wsgi", "-c", "gunicorn.conf"]
+          {{- end }}
+          ports:
+            - containerPort: {{ .Values.image.containerPort }}
+          env:
+            - name: ENV_STATE
+              value: {{ .Values.global.envState }}
+            - name: app2_ENDPOINT
+              value: "app2.{{ .Values.global.cloudMapNamespace }}"
+            - name: DJANGO_SETTINGS_MODULE
+              value: "config.settings.{{ .Values.global.django.settingsFile }}"
+            {{- if has .Values.global.envState .Values.global.datadog.enable }}
+            - name: DD_AGENT_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: DD_ENV
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['tags.datadoghq.com/env']
+            - name: DD_SERVICE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['tags.datadoghq.com/service']
+            - name: DD_VERSION
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['tags.datadoghq.com/version']
+            - name: DD_LOGS_INJECTION
+              value: "true"
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /ht/
+              port: {{ .Values.image.containerPort }}
+              scheme: HTTP
+              httpHeaders:
+              - name: Host
+                value: localhost
+            initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.livenessProbe.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: /ht/
+              port: {{ .Values.image.containerPort }}
+              scheme: HTTP
+              httpHeaders:
+              - name: Host
+                value: localhost
+            initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.readinessProbe.failureThreshold }}
+          resources:
+            requests:
+              cpu: {{ .Values.resources.requests.cpu }}
+            limits:
+              cpu: {{ .Values.resources.limits.cpu }}
+
+---
+apiVersion: autoscaling/v2beta2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: "{{ .Values.serviceName }}-hpa"
+  namespace: {{ .Values.namespace }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ .Values.serviceName }}
+  minReplicas: {{ .Values.replicaCount }}
+  maxReplicas: {{ .Values.maxReplicaCount }}
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: {{ .Values.hpa.averageUtilization }}

@@ -1,0 +1,140 @@
+apiVersion: appmesh.k8s.aws/v1beta2
+kind: VirtualNode
+metadata:
+  name: {{ .Values.serviceName }}
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ .Values.serviceName }}
+  listeners:
+    - portMapping:
+        port: {{ .Values.image.containerPort }}
+        protocol: http
+      tls:
+        mode: STRICT
+        certificate:
+          acm:
+            certificateARN: {{ .Values.global.certificateARN }}
+      timeout:
+        http:
+          idle:
+            value: {{ .Values.requestTimeout }}
+            unit: s
+          perRequest:
+            value: {{ .Values.requestTimeout }}
+            unit: s
+  serviceDiscovery:
+    awsCloudMap:
+      namespaceName: {{ .Values.global.cloudMapNamespace }}
+      serviceName: {{ .Values.serviceName }}
+  logging:
+    accessLog:
+      file:
+        path: "/dev/stdout"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.serviceName }}
+  namespace: {{ .Values.namespace }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Values.serviceName }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.serviceName }}
+        {{- if has .Values.global.envState .Values.global.datadog.enable }}
+        tags.datadoghq.com/env: "{{ .Values.global.envState }}"
+        tags.datadoghq.com/service: "{{ .Values.serviceName }}"
+        tags.datadoghq.com/version: "{{ .Values.global.datadog.version }}"
+        {{- end }}
+      annotations:
+        fluentbit.io/parser: envoy
+        appmesh.k8s.aws/mesh: {{ .Values.global.serviceMesh }}
+        appmesh.k8s.aws/virtualNode: "{{ .Values.serviceName }}_{{ .Values.namespace }}"
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      containers:
+        - name: {{ .Values.serviceName }}
+          image: "{{ .Values.global.accountId }}.{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: Always
+          {{- if has .Values.global.envState .Values.global.datadog.enable }}
+          command: ["ddtrace-run", "gunicorn", "-c", "gunicorn_conf.py", "main:app"]
+          {{- end }}
+          securityContext:
+            runAsUser: {{ .Values.runUserId }}
+            runAsNonRoot: true
+          ports:
+            - containerPort: {{ .Values.image.containerPort }}
+          env:
+            - name: ENV_STATE
+              value: {{ .Values.global.envState }}
+            {{- if has .Values.global.envState .Values.global.datadog.enable }}
+            - name: DD_AGENT_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: DD_ENV
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['tags.datadoghq.com/env']
+            - name: DD_SERVICE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['tags.datadoghq.com/service']
+            - name: DD_VERSION
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['tags.datadoghq.com/version']
+            - name: DD_LOGS_INJECTION
+              value: "true"
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /
+              port: {{ .Values.image.containerPort }}
+              scheme: HTTPS
+            initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.livenessProbe.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: {{ .Values.image.containerPort }}
+              scheme: HTTPS
+            initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.readinessProbe.failureThreshold }}
+          resources:
+            requests:
+              cpu: {{ .Values.resources.requests.cpu }}
+            limits:
+              cpu: {{ .Values.resources.limits.cpu }}
+
+---
+apiVersion: autoscaling/v2beta2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: "{{ .Values.serviceName }}-hpa"
+  namespace: {{ .Values.namespace }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ .Values.serviceName }}
+  minReplicas: {{ .Values.replicaCount }}
+  maxReplicas: {{ .Values.maxReplicaCount }}
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: {{ .Values.hpa.averageUtilization }}
